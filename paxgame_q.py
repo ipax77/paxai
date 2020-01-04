@@ -18,7 +18,7 @@ cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                  period=10
                                                  )
 
-MAXMINS = 500
+MAXMINS = 1000
 t1 = datetime.datetime.now()
 
 def new_board(size):
@@ -186,7 +186,7 @@ class Agent(Player):
         q_values = self.predict_q(board)
         temp_q = q_values.copy()
         #temp_q[board != 0] = temp_q.min() - 1  # no illegal moves
-        temp_q = np.argwhere(board == 0)
+        #temp_q = np.argwhere(board == 0)
         #move = np.unravel_index(np.argmax(temp_q), board.shape)
         move = np.unravel_index(np.argmax(temp_q), (4, 20, 60))
         value = temp_q.max()
@@ -213,14 +213,14 @@ class Agent(Player):
 random.seed(4)
 agent = Agent(3, seed=4)
 
-agent.model = tf.keras.models.load_model('model_h5/paxgame_q_500.h5')
-agent.model.summary()
+#agent.model = tf.keras.models.load_model('model_h5/paxgame_q_500.h5')
+#agent.model.summary()
 
-results = [play(new_board(3), {+1: agent, -1: RandomPlayer()}, i) for i in range(10000)]
+results = [play(new_board(3), {+1: agent, -1: RandomPlayer()}, i) for i in range(100)]
 collections.Counter(results)
 
-agent.model.save('model_h5/paxgame_q_500.h5')
+agent.model.save('model_h5/paxgame_q_1000.h5')
 t2 = datetime.datetime.now()
 print (t2 - t1)
 
-show(results, size=500)
+show(results, size=10)
