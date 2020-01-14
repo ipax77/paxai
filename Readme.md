@@ -5,8 +5,9 @@ A YouTube Video about the game mechanics is availabe [here](http://www.youtube.c
 
 The dotnet core port with basic game play and REST API for the result generation is available [here](https://git.scytec.de/pax77/paxgame)
 
-14/01/2020 Result for 1.5k starting minerals vs a random dotnet bot with some basic adjustments to improve play:
+
+# 14/01/2020 Result for 1.5k starting minerals vs a random dotnet bot with some basic adjustments to improve play:
 ![training result](https://github.com/ipax77/paxai/blob/master/TensorBoard/1p5_100k_true/Figure_1.png)
 
-Final build:
+# Final build:
 ![final build](https://github.com/ipax77/paxai/blob/master/TensorBoard/1p5_100k_true/finalbuild.JPG)
