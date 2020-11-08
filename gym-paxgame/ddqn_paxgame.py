@@ -27,6 +27,7 @@ policy_dir = os.path.join(tempdir, 'policy')
 checkpoint_dir = os.path.join(tempdir, 'checkpoint')
 train_step_counter = tf.Variable(0)
 h5_file = '/data/ml/model_h5/ddqn_paxgame_1.h5'
+DoLoadH5 = True
 
 EPISODES = 2000
 
@@ -76,13 +77,13 @@ class ExpirienceReplay:
         return len(self._buffer)
 
 class DDQNAgent:
-    def __init__(self, expirience_replay, state_size, actions_size, optimizer):
+    def __init__(self, expirience_replay, state_size, actions_size, optimizer, DoLoadH5):
         
         # Initialize atributes
         self._state_size = state_size
         self._action_size = actions_size
         self._optimizer = optimizer
-        
+        self.DoLoadH5 = DoLoadH5
         self.expirience_replay = expirience_replay
         
         # Initialize discount and exploration rate
@@ -147,36 +148,10 @@ class DDQNAgent:
         # update target network parameters slowly from primary network
         self.align_target_network()
         
-        return loss
+        if (self.DoLoadH5):
+            self.primary_network.load_weights(h5_file)
+            self.DoLoadH5 = False
 
-def train(self, batch_size):
-        if self.expirience_replay.buffer_size < BATCH_SIZE * 3:
-            return 0
-        
-        batch = self.expirience_replay.get_batch(batch_size)
-        states, actions, rewards, next_states = expirience_replay.get_arrays_from_batch(batch)
-        
-        # Predict Q(s,a) and Q(s',a') given the batch of states
-        q_values_state = self.primary_network(states).numpy()
-        q_values_next_state = self.primary_network(next_states).numpy()
-        
-        # Initialize target
-        target = q_values_state
-        updates = np.zeros(rewards.shape)
-                
-        valid_indexes = np.array(next_states).sum(axis=1) != 0
-        batch_indexes = np.arange(BATCH_SIZE)
-
-        action = np.argmax(q_values_next_state, axis=1)
-        q_next_state_target = self.target_network(next_states)
-        updates[valid_indexes] = rewards[valid_indexes] + GAMMA * q_next_state_target.numpy()[batch_indexes[valid_indexes], action[valid_indexes]]
-        
-        target[batch_indexes, actions] = updates
-        loss = self.primary_network.train_on_batch(states, target)
-
-        # Slowly update target network parameters from primary network
-        self.align_target_network()
-        
         return loss
 
 class AgentTrainer():
@@ -274,7 +249,7 @@ def show(results, size=500, title='Moving average of game outcomes',
 
 optimizer = Adam()
 expirience_replay = ExpirienceReplay(50000)
-agent = DDQNAgent(expirience_replay, NUM_STATES, NUM_ACTIONS, optimizer)
+agent = DDQNAgent(expirience_replay, NUM_STATES, NUM_ACTIONS, optimizer, DoLoadH5)
 agent_trainer = AgentTrainer(agent, enviroment)
 agent_trainer.train(EPISODES)
 

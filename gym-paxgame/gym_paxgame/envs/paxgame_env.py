@@ -37,6 +37,17 @@ class PaxGameEnv(gym.Env):
         # self.build_area_player2 = spaces.Box(low=0, high=2000, shape=(10, 20), dtype=np.int32)
         # self.observation_space = spaces.Tuple([self.build_area_player1, self.build_area_player2])
         self.observation_space = spaces.Box(low=0, high=2000, shape=(20, 20), dtype=np.int32)
+
+        self.unitmask = {}
+        for i in range(BUNITS):
+            self.unitmask[i] = np.zeros(num_actions, dtype=np.int8)
+
+        for i in range(BPOS):
+            bunit = int(i / BSIZE)
+            for j in range(BUNITS):
+                if bunit != j:
+                    self.unitmask[j][i] = 1
+
     def get_osbervation_spec(self):
         """:returns An 'arrayspec' or a nested dict, list or tuple"""
         state_spec = array_spec.ArraySpec(shape=(20, 20), dtype=np.int32, name='state')
@@ -61,7 +72,7 @@ class PaxGameEnv(gym.Env):
         roundmins = self.state['round'] * STEPMINERALS
         isvalid = self.state_generator(move)
         if isvalid:
-            self.state['actions'][p].append(str(move))
+            self.state['actions'][p].append(move)
         else:
             print("invalid action :( - " + str(move))
             # return self.state['board'], -10, True, {}
@@ -73,15 +84,10 @@ class PaxGameEnv(gym.Env):
 
         if ((isSinglePlayer and self.state['minerals'][p] >= roundmins) or (self.state['minerals'][p] >= roundmins and self.state['minerals'][-p] >= roundmins)):
             if isSinglePlayer:
-                while self.state['minerals'][-1] < roundmins:
-                    rmove = random.choice([i for i in range(0, num_actions - 1) if i not in self.state['actions'][-1]])
-                    self.state['on_move'] = -1
-                    isvalid = self.state_generator(rmove)
-                    if isvalid:
-                        self.state['actions'][-1].append(str(rmove))
-                self.state['on_move'] = 1
+                self.GenRandomBuild(self.build, self.mono, roundmins)
+                # print(np.sort(self.state['actions'][-1]))
             restsuccess = False
-            request = RESTurl + "paxgame/result/" + seperator.join(self.state['actions'][1]) + "/" + seperator.join(self.state['actions'][-1])
+            request = RESTurl + "paxgame/result/" + seperator.join(str(x) for x in self.state['actions'][1]) + "/" + seperator.join(str(x) for x in self.state['actions'][-1])
             try:
                 response = requests.get(url = request)
                 restsuccess = True
@@ -168,6 +174,8 @@ class PaxGameEnv(gym.Env):
         self.state['actions'] = {}
         self.state['actions'][1] = []
         self.state['actions'][-1] = []
+        self.build = None
+        self.mono = False
         # return np.array_split(self.state['board'], 2, axis=1)
         return self.state['board']
     def render(self, mode='human', close=False):
@@ -252,6 +260,76 @@ class PaxGameEnv(gym.Env):
                 aent -= BSIZE
         self.state['minerals'][self.state['on_move']] += minerals
         return valid
+    
+    def GenRandomBuild(self, build, mono, minerals):
+        self.state['on_move'] = -1
+        line = -1
+        linemoves = []
+        move = -1
+        if not build:
+            build = str(random.choice(['random', 'line', 'dist']))
+            mono = bool(random.getrandbits(1))
+
+        if build == 'random' and mono == False:
+            possiblemoves = [i for i in range(0, num_actions) if self.state['moves'][-1][i] != 1]
+        else:
+            monounit = -1
+            for i in range(len(self.state['actions'][-1])):
+                if (self.state['actions'][-1][i] <= BPOS):
+                    monounit = int(self.state['actions'][-1][i] / BSIZE)
+                    mymod = int(i - (monounit * BSIZE))
+                    line = int(mymod / int(BSIZEY))
+                    move = self.state['actions'][-1][i]
+                    break
+            if monounit == -1:
+                monounit = int(np.random.randint(low=0, high=BUNITS - 1, size=1))
+                line = int(np.random.randint(low=0, high=BSIZEX - 1, size=1))
+                move = int(np.random.randint(low=0, high=BPOS - 1, size=1))
+            possiblemoves = [i for i in range(0, num_actions) if self.state['moves'][-1][i] != 1 and self.unitmask[monounit][i] == 0]
+
+        while self.state['minerals'][-1] < minerals:
+            if build == 'random':
+                rmove = random.choice([i for i in possiblemoves if self.state['moves'][-1][i] != 1])
+            elif build == 'line':
+                linemoves = [i for i in possiblemoves if self.state['moves'][-1][i] != 1 and self.GetLine(i, line)]
+                while not linemoves:
+                    line += 1
+                    if line > BSIZEX -1:
+                        line = 0
+                    linemoves = [i for i in possiblemoves if self.state['moves'][-1][i] != 1 and self.GetLine(i, line)]
+                rmove = random.choice(linemoves)
+            elif build == 'dist':
+                distmoves = [i for i in self.GetDistMoves(move, possiblemoves) if self.state['moves'][-1][i] != 1]
+                rmove = random.choice(distmoves)
+
+            isvalid = self.state_generator(rmove)
+            if isvalid:
+                self.state['actions'][-1].append(rmove)
+
+        self.state['on_move'] = 1
+    
+    def GetLine(self, move, line):
+        if move > BPOS:
+            return True
+        unit = int(move / BSIZE)
+        mymod = int(move - (unit * BSIZE))
+        return int(mymod / int(BSIZEY)) == line
+
+    def GetDistMoves(self, move, moves):
+        point = self.GetXY(move)
+        points = np.asarray([self.GetXY(i) for i in moves])
+        dists = (points - point)**2
+        dists = np.sum(dists, axis=1)
+        dists = np.sqrt(dists)
+        dists, moves = zip(*sorted(zip(dists, moves)))
+        return moves[:20]
+    
+    def GetXY(self, move):
+        unit = int(move / BSIZE)
+        mymod = int(move - (unit * BSIZE))
+        x = int(mymod / int(BSIZEY))
+        y = int(mymod - (int(mymod / BSIZEY) * BSIZEY))
+        return [x, y]
 
     def State_mirrorImage(self, x1, y1):
         a = 1
