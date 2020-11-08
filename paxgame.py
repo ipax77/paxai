@@ -14,6 +14,12 @@ import datetime as dt
 import collections
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+import os
+
+from flask import jsonify, make_response, Flask, request
+from flask_restful import abort,Resource, Api
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 class PaxGame:
     def __init__(self):
@@ -38,9 +44,9 @@ STORE_PATH = './TensorBoard'
 MAXMINS = 1500
 MAX_EPSILON = 1
 MIN_EPSILON = 0.01
-num_episodes = 100
-EPSILON_MIN_ITER = 25
-DELAY_TRAINING = 10
+num_episodes = 2
+EPSILON_MIN_ITER = 1
+DELAY_TRAINING = 0
 GAMMA = 0.95
 BATCH_SIZE = 32
 TAU = 0.08
@@ -98,7 +104,6 @@ def update_network(primary_network, target_network):
     for t, e in zip(target_network.trainable_variables, primary_network.trainable_variables):
         t.assign(t * (1 - TAU) + e * TAU)
 
-
 class Memory:
     def __init__(self, max_memory):
         self._max_memory = max_memory
@@ -107,6 +112,7 @@ class Memory:
         self._samples.append(sample)
         if len(self._samples) > self._max_memory:
             self._samples.pop(0)
+
     def sample(self, no_samples):
         if no_samples > len(self._samples):
             return random.sample(self._samples, len(self._samples))
@@ -263,7 +269,6 @@ def show(results, size=500, title='Moving average of game outcomes',
 
 player_objs = {+1: Player(), -1: RandomPlayer()}
 eps = MAX_EPSILON
-train_writer = tf.summary.create_file_writer(STORE_PATH + f"/DuelingQ_{dt.datetime.now().strftime('%d%m%Y%H%M')}")
 steps = 0
 results = []
 
@@ -277,6 +282,7 @@ for i in range(num_episodes):
         player_objs[player].new_game()
     player = +1
     done = False
+
     while True:
         valid = False
         predicted = False
@@ -306,11 +312,7 @@ for i in range(num_episodes):
 
         reward = 0
         if player_objs[player].minerals >= MAXMINS:
-            #print (player_objs[player].actions)
-            headers = {'content-type': 'application/json'}
-            response = requests.post(url = "http://localhost:5000/get1dresult/" + str(MAXMINS), data = json.dumps(next_state.tolist()), headers = headers)  
-            #response = requests.post(url = "http://localhost:50586/get1dresult/" + str(MAXMINS), data = json.dumps(next_state.tolist()), headers = headers)  
-            reward = float(response.text)
+            reward = 0
             preward = 0
             if reward >= 1:
                 preward = 1
@@ -319,8 +321,6 @@ for i in range(num_episodes):
             results.append(preward)
             
             done = True
-        #else:
-        #    reward = 0.01
         
         tot_reward += reward
         if done:
@@ -334,44 +334,85 @@ for i in range(num_episodes):
                 loss = -1
             avg_loss += loss
 
-        
-        #if player == 1 and action >= 0:
-            # store in memory
-            #memory.add_sample((player_objs[1].state, action, reward, next_state))
-            #if steps > DELAY_TRAINING:
-            #    loss = train(primary_network, memory, target_network)
-            #    update_network(primary_network, target_network)
-            #else:
-            #    loss = -1
-            #avg_loss += loss
-            #avg_loss = loss
-
         if done:
             steps += 1
-            if steps > DELAY_TRAINING:
-                # linearly decay the eps value
-                eps = MAX_EPSILON - ((steps - DELAY_TRAINING) / EPSILON_MIN_ITER) * \
-                    (MAX_EPSILON - MIN_EPSILON) if steps < EPSILON_MIN_ITER else \
-                    MIN_EPSILON
-                #avg_loss /= cnt
-                #print(f"Episode: {i}, Reward: {tot_reward}, avg loss: {avg_loss:.5f}, eps: {eps:.3f}")
-                print(f"Episode: {i}, Reward: {tot_reward}, Predicted: {player_objs[1].predicted}, avg loss: {avg_loss:.5f}, eps: {eps:.3f}, mins: {player_objs[player].minerals}")
-                with train_writer.as_default():
-                    tf.summary.scalar('reward', cnt, step=i)
-                    tf.summary.scalar('avg loss', avg_loss, step=i)
-            else:
-                print(f"Pre-training...Episode: {i}")
             break
+
         if action >= 0:
             player_objs[player].lastmove = action
             player_objs[player].state = next_state
-        #player *= -1
         cnt += 1
+
+primary_network.load_weights('model_h5/paxgame_gym_vs_dotnet_lineformation_1p5k_100k.h5')
+primary_network.summary()
+
+player_objs[1].new_game()
+
+action = np.argmax(np.ma.array(primary_network(player_objs[1].state.reshape(1, -1)), mask = player_objs[1].moves))
+next_state, minerals, coord, valid = step(player, action, player_objs[player].state, player_objs[player].minerals)
+if action >= 0:
+    player_objs[player].minerals += minerals
+    player_objs[player].moves[action] = 1
+    player_objs[player].actions.append(action)
+    player_objs[player].states.append(next_state)
+
+print (action + coord)
+
+app = Flask(__name__)
+api = Api(app)
+
+class GetTest(Resource):
+    def get(self):
+        return "Hello World"
+
+class GetMove(Resource):
+    def get(self):
+        return json.dumps(player_objs[1].state.tolist())
+
+    def post(self):
+        starttot = dt.datetime.now()
+        setting = json.loads(request.data)
+        player_objs[1].state = np.asarray(setting[0])
+        player_objs[1].moves = np.asarray(setting[1][0])
+        starttime = dt.datetime.now()
+        areshape = player_objs[1].state.reshape(1, -1)
+        print ('shape: ' + str(dt.datetime.now() - starttime))
+        anetwork = primary_network(areshape)
+        print ('netwo: ' + str(dt.datetime.now() - starttime))
+        testaction = np.argmax(anetwork)
+        print ('testa: ' + str(dt.datetime.now() - starttime))
+        amask = np.ma.array(anetwork, mask = player_objs[1].moves)
+        print ('maska: ' + str(dt.datetime.now() - starttime))
+        action = np.argmax(amask)
+        print ('actio: ' + str(dt.datetime.now() - starttime))
+        #action = np.argmax(np.ma.array(primary_network(player_objs[1].state.reshape(1, -1)), mask = player_objs[1].moves))
+        print (action)
+        data = {'action': str(action)}
+        print ('tota: ' + str(dt.datetime.now() - starttot))
+        return make_response(jsonify(data), 201)
+
+class GetSMove(Resource):
+    def get(self, moves):
+        mymoves = moves.split("X")
+        player = 1
+        player_objs[player].new_game()
+        next_state = np.zeros((20, 61))
+        mcount = len(mymoves)
+        if (mcount > 1):
+            for i in range(mcount):
+                mymove = int(mymoves[i])
+                next_state, minerals, coord, valid = step(player, mymove, player_objs[player].state, player_objs[player].minerals) 
+                player_objs[player].moves[mymove] = 1
+        player_objs[player].state = next_state
+        action = np.argmax(np.ma.array(primary_network(player_objs[player].state.reshape(1, -1)), mask = player_objs[player].moves))
+        return {'task': str(action)}, 201, {'Etag': 'some-opaque-string'}
+
     
-tf.keras.models.save_model(primary_network, "/data/ml/test_primary_network.h5", save_format="tf", overwrite=True)
-tf.keras.models.save_model(target_network, "/data/ml/test_target_network.h5", save_format="tf", overwrite=True)
 
 
-#primary_network.save_weights('model_h5/paxgame_gym_vs_dotnet_lineformation_1p5k_100k.h5')
-collections.Counter(results)        
-show(results, size=int(num_episodes / 20))
+api.add_resource(GetTest, '/test')
+api.add_resource(GetMove, '/getmove')
+api.add_resource(GetSMove, '/getsmove/<string:moves>')
+
+if __name__ == '__main__':
+     app.run(host='0.0.0.0', port='5077', threaded=True)

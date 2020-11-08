@@ -20,7 +20,7 @@ class PaxGame:
         self.env = gym.Env
         #self.env.action_space = spaces.Discrete(4800)
         #self.env.action_space = spaces.Discrete(40*120)
-        self.env.action_space = spaces.Discrete(3*20*60 + 3)
+        self.env.action_space = spaces.Discrete(3*20*60 + 5)
         #self.env.reward_range: (-inf, inf)
         #self.env.observation_space = Box(4, 20, 50)
         
@@ -35,14 +35,14 @@ tf.keras.backend.set_floatx('float64')
 
 p = PaxGame()
 STORE_PATH = './TensorBoard'
-MAXMINS = 1500
+MAXMINS = 3000
 MAX_EPSILON = 1
 MIN_EPSILON = 0.01
-num_episodes = 100
-EPSILON_MIN_ITER = 25
-DELAY_TRAINING = 10
+num_episodes = 10
+EPSILON_MIN_ITER = 3
+DELAY_TRAINING = 0
 GAMMA = 0.95
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 TAU = 0.08
 RANDOM_REWARD_STD = 1.0
 env = p.env
@@ -81,6 +81,8 @@ class DQModel(tf.keras.Model):
             combined = self.combine([v, norm_adv])
             return combined
         return adv
+    def get_config(self):
+        pass
 
 primary_network = DQModel(30, num_actions, True)
 target_network = DQModel(30, num_actions, True)
@@ -107,6 +109,7 @@ class Memory:
         self._samples.append(sample)
         if len(self._samples) > self._max_memory:
             self._samples.pop(0)
+
     def sample(self, no_samples):
         if no_samples > len(self._samples):
             return random.sample(self._samples, len(self._samples))
@@ -182,7 +185,20 @@ def step(player, action, state, minerals):
             myminerals = 25 # ConcussiveShells
             mystate[2][60] = player
             return mystate, myminerals, coord, True
-
+    elif action == 3604:
+        if mystate[3][60] == player:
+            return mystate, myminerals, coord, False
+        else:
+            myminerals = 100 # Attac Upgrade
+            mystate[3][60] = player
+            return mystate, myminerals, coord, True
+    elif action == 3605:
+        if mystate[4][60] == player:
+            return mystate, myminerals, coord, False
+        else:
+            myminerals = 100 # Armor Upgrade
+            mystate[4][60] = player
+            return mystate, myminerals, coord, True
 
     for i in range(3):
         for j in range(20):
@@ -210,7 +226,7 @@ def step(player, action, state, minerals):
 class Player():
     def __init__(self):
         self.minerals = 0
-        self.moves = np.zeros(3*20*60 + 3)
+        self.moves = np.zeros(3*20*60 + 5)
         self.states = []
         self.actions = []
         self.rewardmod = []
@@ -220,7 +236,7 @@ class Player():
         self.state = np.zeros((20, 61))
     def new_game(self):
         self.minerals = 0
-        self.moves = np.zeros(3*20*60 + 3)
+        self.moves = np.zeros(3*20*60 + 5)
         self.states = []
         self.actions = []
         self.rewardmod = []
@@ -263,7 +279,7 @@ def show(results, size=500, title='Moving average of game outcomes',
 
 player_objs = {+1: Player(), -1: RandomPlayer()}
 eps = MAX_EPSILON
-train_writer = tf.summary.create_file_writer(STORE_PATH + f"/DuelingQ_{dt.datetime.now().strftime('%d%m%Y%H%M')}")
+#train_writer = tf.summary.create_file_writer(STORE_PATH + f"/DuelingQ_{dt.datetime.now().strftime('%d%m%Y%H%M')}")
 steps = 0
 results = []
 
@@ -277,6 +293,11 @@ for i in range(num_episodes):
         player_objs[player].new_game()
     player = +1
     done = False
+    resultcnt = 0
+    headers = {'content-type': 'application/json'}
+    if i == 5:
+        primary_network.load_weights('model_h5/paxgame_gym_vs_dotnet_lineformation_1p5k_10k_upgradetest2.h5')
+
     while True:
         valid = False
         predicted = False
@@ -299,6 +320,7 @@ for i in range(num_episodes):
                 player_objs[player].rewardmod.append(math.trunc(stepper * (int(dist) / 60)) / stepper)
             else:
                 player_objs[player].rewardmod.append(0)
+            
             player_objs[player].lastcoord = coord
 
         if predicted == True:
@@ -307,9 +329,8 @@ for i in range(num_episodes):
         reward = 0
         if player_objs[player].minerals >= MAXMINS:
             #print (player_objs[player].actions)
-            headers = {'content-type': 'application/json'}
-            response = requests.post(url = "http://localhost:5000/get1dresult/" + str(MAXMINS), data = json.dumps(next_state.tolist()), headers = headers)  
-            #response = requests.post(url = "http://localhost:50586/get1dresult/" + str(MAXMINS), data = json.dumps(next_state.tolist()), headers = headers)  
+            #response = requests.post(url = "http://localhost:5000/get1dresult/" + str(MAXMINS), data = json.dumps(next_state.tolist()), headers = headers)  
+            response = requests.post(url = "http://localhost:50586/get1dresult/" + str(MAXMINS), data = json.dumps(next_state.tolist()), headers = headers)  
             reward = float(response.text)
             preward = 0
             if reward >= 1:
@@ -320,13 +341,22 @@ for i in range(num_episodes):
             
             done = True
         #else:
-        #    reward = 0.01
+        #    for s in range(int(MAXMINS / 500)):
+        #        if (player_objs[player].minerals >= (s + 1) * 500 and resultcnt == s):
+        #            resultcnt += 1
+        #            response = requests.post(url = "http://localhost:5000/get1dresult/" + str((s + 1) * 500), data = json.dumps(next_state.tolist()), headers = headers)  
+        #            reward = float(response.text)
+        #            for r in range(len(player_objs[player].rewardmod)):
+        #                player_objs[player].rewardmod[r] = reward
         
+
+
         tot_reward += reward
+
         if done:
             for j in range(len(player_objs[1].actions) - 1):
-                memory.add_sample((player_objs[1].states[j], player_objs[1].actions[j], reward - player_objs[player].rewardmod[j], player_objs[1].states[j+1]))
-            memory.add_sample((next_state, player_objs[1].lastmove, reward, None))
+                memory.add_sample((player_objs[1].states[j], player_objs[1].actions[j], tot_reward - player_objs[player].rewardmod[j], player_objs[1].states[j+1]))
+            memory.add_sample((next_state, player_objs[1].lastmove, tot_reward, None))
             if steps > DELAY_TRAINING:
                 loss = train(primary_network, memory, target_network)
                 update_network(primary_network, target_network)
@@ -356,9 +386,9 @@ for i in range(num_episodes):
                 #avg_loss /= cnt
                 #print(f"Episode: {i}, Reward: {tot_reward}, avg loss: {avg_loss:.5f}, eps: {eps:.3f}")
                 print(f"Episode: {i}, Reward: {tot_reward}, Predicted: {player_objs[1].predicted}, avg loss: {avg_loss:.5f}, eps: {eps:.3f}, mins: {player_objs[player].minerals}")
-                with train_writer.as_default():
-                    tf.summary.scalar('reward', cnt, step=i)
-                    tf.summary.scalar('avg loss', avg_loss, step=i)
+                #with train_writer.as_default():
+                #    tf.summary.scalar('reward', cnt, step=i)
+                #    tf.summary.scalar('avg loss', avg_loss, step=i)
             else:
                 print(f"Pre-training...Episode: {i}")
             break
@@ -367,11 +397,12 @@ for i in range(num_episodes):
             player_objs[player].state = next_state
         #player *= -1
         cnt += 1
-    
-tf.keras.models.save_model(primary_network, "/data/ml/test_primary_network.h5", save_format="tf", overwrite=True)
-tf.keras.models.save_model(target_network, "/data/ml/test_target_network.h5", save_format="tf", overwrite=True)
 
+primary_network.summary()
+target_network.summary()
 
-#primary_network.save_weights('model_h5/paxgame_gym_vs_dotnet_lineformation_1p5k_100k.h5')
+primary_network.save_weights('model_h5/paxgame_gym_vs_dotnet_lineformation_1p5k_10k_upgradetest3.h5')
+primary_network.save('/data/ml/save/primary_network', save_format='tf')
+
 collections.Counter(results)        
 show(results, size=int(num_episodes / 20))

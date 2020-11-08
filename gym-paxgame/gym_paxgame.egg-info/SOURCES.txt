@@ -1,0 +1,7 @@
+README.md
+setup.py
+gym_paxgame.egg-info/PKG-INFO
+gym_paxgame.egg-info/SOURCES.txt
+gym_paxgame.egg-info/dependency_links.txt
+gym_paxgame.egg-info/requires.txt
+gym_paxgame.egg-info/top_level.txt

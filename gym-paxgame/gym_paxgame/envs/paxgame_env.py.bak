@@ -1,0 +1,199 @@
+import gym
+from gym import spaces
+import numpy as np
+import requests
+import json
+import time
+
+BUNITS = 3
+BSIZEX = 10
+BSIZEY = 18
+BUPGRADES = 5
+BPOS = BUNITS * BSIZEX * BSIZEY
+BSIZE = BSIZEX * BSIZEY
+num_actions = BUNITS*BSIZEX*BSIZEY + BUPGRADES
+STEPMINERALS = 500
+
+headers = {'content-type': 'application/json'}
+with open('/data/pgconfig.json', 'r') as f:
+    config = json.load(f)
+# RESTurl = config['pgConfig']['NetResturl']
+# RESTurl = "http://localhost:51031/"
+RESTurl = "http://localhost:5000/"
+class PaxGameEnv(gym.Env):
+    metadata = {'render.modes': ['human']}
+    
+    symbols = ['O', ' ', 'X'];
+
+    def __init__(self):
+        self.action_space = spaces.Discrete(num_actions)
+        # self.build_area_player1 = spaces.Box(low=0, high=2000, shape=(10, 20), dtype=np.int32)
+        # self.build_area_player2 = spaces.Box(low=0, high=2000, shape=(10, 20), dtype=np.int32)
+        # self.observation_space = spaces.Tuple([self.build_area_player1, self.build_area_player2])
+        self.observation_space = spaces.Box(low=0, high=2000, shape=(20, 20), dtype=np.int32)
+    def step(self, action):
+        done = False
+        gameid = -1
+        p = 1
+        if (type(action) is int):
+            move = action
+            self.state['on_move'] = p
+        else:
+            gameid, p, move = action
+        
+        # check move legality
+        moves = self.state['moves'][p]
+        proposed = moves[move]
+        om = self.state['on_move']
+        # if (proposed != 0):  # wrong player, not empty
+        #    done = True
+        #    response = requests.get(url = RESTurl + "paxgame/skip")
+        #    print("illegal move ", action, ". (square occupied): ", move, " Game: ", response.text)
+        #    return self.state['board'], -1, done, {}
+        # else:
+        #    moves[move] = 1
+        #    if move < BPOS:
+        #        taction = move + BSIZEX * BSIZEY
+        #        while taction < BPOS:
+        #            moves[taction] = 1
+        #            taction += BSIZEX * BSIZEY
+        #        taction = move - BSIZEX * BSIZEY
+        #        while taction >= 0:
+        #            moves[taction] = 1
+        #            taction -= BSIZEX * BSIZEY
+            
+        # check game over
+
+        roundmins = self.state['round'] * STEPMINERALS
+        self.state_generator(move)
+        if (self.state['minerals'][p] >= roundmins and self.state['minerals'][-p] >= roundmins):
+            restsuccess = False
+            try:
+                response = requests.get(url = RESTurl + "paxgame2/" + str(gameid) + "/" + str(om) + "/" + str(move), headers = headers);
+                restsuccess = True
+            except:
+                print("Socket error :((")
+                time.sleep(1)
+                i = 0
+                while i < 10:
+                    try:
+                        response = requests.get(url = RESTurl + "paxgame2/" + str(gameid) + "/" + str(om) + "/" + str(move), headers = headers);
+                        restsuccess = True
+                    except:
+                        i += 1
+                        time.sleep(2)
+            finally:
+                if restsuccess == False:
+                    print("Socket error retry failed.")
+
+            next_state = np.asarray(json.loads(response.text), dtype=np.int32)
+            reward1 = float(next_state[-1][0])
+            reward2 = float(next_state[-1][-1])
+            hp1 = next_state[-2][0]
+            hp2 = next_state[-2][-1]
+            self.state['minerals'][1] = next_state[-2][1]
+            self.state['minerals'][-1] = next_state[-2][-2]
+            # self.state['board'] = np.array_split(next_state[:-1, :], 2, axis=1)
+            self.state['board'] = next_state[:-1, :]
+            if hp1 == 0 or hp2 == 0:
+                done = True
+
+        else:
+            reward1 = 0
+
+        if (self.state['minerals'][1] >= roundmins and self.state['minerals'][-1] < roundmins):
+            self.state['on_move'] = -1
+        elif (self.state['minerals'][-1] >= roundmins and self.state['minerals'][1] < roundmins):
+            self.state['on_move'] = 1
+        else:    
+            self.state['on_move'] = -1       
+
+        if (self.state['minerals'][1] >= roundmins and self.state['minerals'][-1] >= roundmins):
+            self.state['round'] += 1
+        #DEBUG
+        # if (done == True):
+        #    print("Reward: ", reward1, " hp1: ", hp1, " hp2: ", hp2)
+        #    print("Mins1: ", mins1, " Mins2: ", mins2, " Round: ", self.state['round'])
+        #    self.render()
+
+        if (reward1 == 0):
+            reward1 = 0.1
+        return self.state['board'], reward1, done, {}
+    def reset(self):
+        self.state = {}
+        self.state['board'] = np.zeros((20, 18 + 2), dtype=np.int32)
+        self.state['on_move'] = 1
+        self.state['moves'] = {}
+        self.state['moves'][1] = np.zeros(BUNITS*BSIZEX*BSIZEY + BUPGRADES)
+        self.state['moves'][-1] = np.zeros(BUNITS*BSIZEX*BSIZEY + BUPGRADES)
+        self.state['hp'] = {}
+        self.state['hp'][1] = 1
+        self.state['hp'][-1] = 1
+        self.state['minerals'] = {}
+        self.state['minerals'][1] = 0
+        self.state['minerals'][-1] = 0
+        self.state['round'] = 1
+        # return np.array_split(self.state['board'], 2, axis=1)
+        return self.state['board']
+    def render(self, mode='human', close=False):
+        if close:
+            return
+        print("Round: " + str(self.state['round']) + " OnMove: " + str(self.state['on_move']) + " Mins1: " + str(self.state['minerals'][1]) + " Mins2: " + str(self.state['minerals'][-1]))
+        # print(self.state['board'])
+        for i in range (BSIZEX * 2):
+           print("|", end="")
+           for j in range (BSIZEY):
+               print(str(self.state['board'][i, j]) + "|", end="")
+           print()
+
+    def move_generator(self, om):
+        moves = [i for i in range(0, num_actions - 1) if self.state['moves'][om][i] == 0]
+        return moves
+    def state_generator(self, move):
+        minerals = 0
+        if move > BPOS:
+            ability = move - BPOS
+            if ability == 1:
+                minerals = 100 # Stimpack
+            elif ability == 2:
+                minerals = 50 # CombatShield
+            elif ability == 3:
+                minerals = 25 # ConcussiveShells
+            elif ability == 4:
+                minerals = 100 # attac
+            elif ability == 5:
+                minerals = 100 # armor
+            if self.state['on_move'] == 1:
+                self.state['board'][-2, ability] = int(1)
+            else:
+                self.state['board'][-2, (ability - BSIZEY) * -1] = int(2)
+        else:
+            unitid = int(move / BSIZE)
+            mymod = int(move - (unitid * BSIZE))
+            x = int(mymod / int(BSIZEY))
+            y = int(mymod - (int(mymod / BSIZEY) * BSIZEY))
+            if unitid == 0:
+                minerals = 50 # Marine
+            elif unitid == 1:
+                minerals = 95 # Marauder
+            elif unitid == 2:
+                minerals = 65
+            if self.state['on_move'] == 1:
+                self.state['board'][y][x] = int((unitid + 1) + 10)
+            elif self.state['on_move'] == -1:
+                (mx, my) = self.State_mirrorImage(x, y)
+                self.state['board'][int(my)][int(mx)] = int((unitid + 1) + 20)
+        self.state['minerals'][self.state['on_move']] += minerals
+
+    def State_mirrorImage(self, x1, y1):
+        a = 1
+        b = 0
+        c = (BSIZEX * 2) / -2
+        temp = -2 * (a * x1 + b * y1 + c) / (a * a + b * b)
+        x = temp * a + x1
+        y = temp * b + y1
+        return (x - 1, y)
+
+
+
+
