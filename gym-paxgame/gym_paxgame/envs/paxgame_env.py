@@ -38,6 +38,7 @@ class PaxGameEnv(gym.Env):
         # self.observation_space = spaces.Tuple([self.build_area_player1, self.build_area_player2])
         self.observation_space = spaces.Box(low=0, high=20, shape=(20, 20), dtype=np.uint8)
         # self.observation_space = self.get_osbervation_spec()
+
         self.unitmask = {}
         for i in range(BUNITS):
             self.unitmask[i] = np.zeros(num_actions, dtype=np.int8)
@@ -167,7 +168,7 @@ class PaxGameEnv(gym.Env):
             obs = np.array(self.state['board'])
             mask = self.state['moves'][1]
             obs = {'state': obs, 'mask': mask}
-            return obs, reward, done, {}
+            return obs, reward, done, {'minerals': self.get_minerals()}
         else:
             return np.array(self.state['board']), reward, done, {}
     def reset(self):
@@ -190,6 +191,7 @@ class PaxGameEnv(gym.Env):
         self.build = None
         self.mono = False
         return np.array(self.state['board'])
+
     def render(self, mode='human', close=False):
         if close:
             return

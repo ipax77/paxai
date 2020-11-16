@@ -1,7 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
 import base64
-import imageio
 import IPython
 import matplotlib
 import matplotlib.pyplot as plt
@@ -33,6 +32,7 @@ from tf_agents.trajectories import trajectory
 from tf_agents.utils import common
 from tf_agents.policies import policy_saver
 from tf_agents.distributions import masked
+from tf_agents.trajectories import time_step as ts
 
 # RESTurl = "http://localhost:51031/"
 # RESTurl = "http://localhost:5000/"
@@ -62,7 +62,7 @@ eval_interval = 1  # @param {type:"integer"}
 
 env_name = 'paxgame-v0'
 env = suite_gym.load(env_name)
-#env = gym.make(env_name)
+restenv = gym.make(env_name)
 
 env.reset()
 
@@ -227,26 +227,32 @@ class GetMoves(Resource):
         moves2 = requests[1].split(seperator)
         round = int(requests[2])
         time_step = example_environment.reset()
-        # if (moves1):
-        #     for m1 in moves1:
-        #         if m1:
-        #             env._step((1, int(m1)))
-        # if (moves2):
-        #     for m2 in moves2:
-        #         if m2:
-        #             env._step((-1, int(m2)))
+        restenv.reset()
+        if (moves1):
+            for m1 in moves1:
+                if m1:
+                    restenv.step((1, int(m1)))
+        if (moves2):
+            for m2 in moves2:
+                if m2:
+                    restenv.step((-1, int(m2)))
 
         minerals = round * 500
         actions = []
         fs = 0
-        while example_environment.state['minerals'][1] < minerals:
+        while restenv.state['minerals'][1] < minerals:
             if fs > 200:
                 break
+            # time_step[3] = tf.convert_to_tensor(np.expand_dims(restenv.state['board'], axis=0), dtype=tf.uint8)
+            if restenv.state['minerals'][1] == 0:
+              time_step = ts.restart(tf.convert_to_tensor(np.expand_dims(restenv.state['board'], axis=0), dtype=tf.uint8))
+            else:
+              time_step = ts.transition(tf.convert_to_tensor(np.expand_dims(restenv.state['board'], axis=0), dtype=tf.uint8), reward=0.0, discount=0.0)
             action_step = agent.policy.action(time_step)
-            next_time_step = example_environment.step(action_step.action)
-            traj = trajectory.from_transition(time_step, action_step, next_time_step)
-            actions.append(action_step.action)
-            time_step = example_environment.current_time_step()
+            _time_step = example_environment.step(action_step)
+            move = action_step.action.numpy()[0]
+            restenv.step((1, move))
+            actions.append(move)
             fs += 1
         return {'task': seperator.join(str(x) for x in actions)}, 201
 
