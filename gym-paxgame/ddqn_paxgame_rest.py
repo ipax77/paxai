@@ -12,6 +12,11 @@ import math
 import matplotlib.pyplot as plt
 import matplotlib.ticker
 
+import logging
+from flask import jsonify, make_response, Flask, request
+from flask_restful import abort,Resource, Api
+from flask.logging import default_handler
+
 from tensorflow.keras import Model, Sequential
 from tensorflow.keras.layers import Dense, Conv2D, Flatten, Input
 from tensorflow.keras.optimizers import Adam
@@ -21,15 +26,15 @@ from tensorflow.keras.callbacks import History
 from tf_agents.utils import common
 from tf_agents.policies import random_tf_policy
 
-# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 tempdir = "/data/ml"
 policy_dir = os.path.join(tempdir, 'policy')
 checkpoint_dir = os.path.join(tempdir, 'checkpoint')
 train_step_counter = tf.Variable(0)
-h5_file = '/data/ml/model_h5/ddqn_paxgame_2.h5'
-DoLoadH5 = False
+h5_file = '/data/ml/model_h5/ddqn_paxgame3_1.h5'
+DoLoadH5 = True
 
-EPISODES = 2000
+EPISODES = 4
 
 MAX_EPSILON = 1
 MIN_EPSILON = 0.01
@@ -39,13 +44,13 @@ LAMBDA = 0.0005
 TAU = 0.08
 
 BATCH_SIZE = 128
-LAYERS = 800
+LAYERS = 720
 REWARD_STD = 1.0
 
-enviroment = gym.make("paxgame-v0")
+environment = gym.make("paxgame-v0")
 
-NUM_STATES = 400
-NUM_ACTIONS = enviroment.action_space.n
+NUM_STATES = 360
+NUM_ACTIONS = environment.action_space.n
 results = []
 
 class ExpirienceReplay:
@@ -150,17 +155,18 @@ class DDQNAgent:
         
         if (self.DoLoadH5):
             self.primary_network.load_weights(h5_file)
+            print('h5 loaded.')
             self.DoLoadH5 = False
 
         return loss
 
 class AgentTrainer():
-    def __init__(self, agent, enviroment):
+    def __init__(self, agent, environment):
         self.agent = agent
-        self.enviroment = enviroment
+        self.environment = environment
         
     def _take_action(self, action):
-        next_state, reward, terminated, _ = self.enviroment.step(action) 
+        next_state, reward, terminated, _ = self.environment.step(action) 
         # next_state = next_state if not terminated else None
         # reward = np.random.normal(1.0, REWARD_STD)
         return next_state, reward, terminated
@@ -168,15 +174,15 @@ class AgentTrainer():
     def _print_epoch_values(self, episode, total_epoch_reward, average_loss):
         print("**********************************")
         print(f"Episode: {episode} - Reward: {total_epoch_reward} - Average Loss: {average_loss:.3f} - Epsilon: {agent.epsilon}")
-        print(f"Rounds: {enviroment.state['round']} - Mins: {enviroment.state['minerals'][1]}|{enviroment.state['minerals'][-1]} - Hp: {enviroment.state['hp'][1]}|{enviroment.state['hp'][-1]}")
+        print(f"Rounds: {environment.state['round']} - Mins: {environment.state['minerals'][1]}|{environment.state['minerals'][-1]} - Hp: {environment.state['hp'][1]}|{environment.state['hp'][-1]}")
     
     def train(self, num_of_episodes = 1000):
         total_timesteps = 0  
         
         for episode in range(0, num_of_episodes):
 
-            # Reset the enviroment
-            state = self.enviroment.reset()
+            # Reset the environment
+            state = self.environment.reset()
 
             # Initialize variables
             average_loss_per_episode = []
@@ -219,7 +225,7 @@ class AgentTrainer():
                     average_loss_per_episode.append(average_loss)
                     self._print_epoch_values(episode, total_epoch_reward, average_loss)
                 
-                # Real Reward is always 1 for Cart-Pole enviroment
+                # Real Reward is always 1 for Cart-Pole environment
                 total_epoch_reward += reward
 
 def moving(data, value=+1, size=100):
@@ -250,8 +256,49 @@ def show(results, size=500, title='Moving average of game outcomes',
 optimizer = Adam()
 expirience_replay = ExpirienceReplay(50000)
 agent = DDQNAgent(expirience_replay, NUM_STATES, NUM_ACTIONS, optimizer, DoLoadH5)
-agent_trainer = AgentTrainer(agent, enviroment)
+agent_trainer = AgentTrainer(agent, environment)
 agent_trainer.train(EPISODES)
 
-agent.primary_network.save_weights(h5_file)
-show(results, size=int(EPISODES / 20))
+# agent.primary_network.save_weights(h5_file)
+# show(results, size=int(EPISODES / 20))
+
+app = Flask(__name__)
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+api = Api(app)
+seperator = ','
+class GetMoves(Resource):
+    def get(self, request):
+        requests = request.split('X')
+        moves1 = requests[0].split(seperator)
+        moves2 = requests[1].split(seperator)
+        round = int(requests[2])
+        environment.reset()
+        if (moves1):
+            for m1 in moves1:
+                if m1:
+                    environment.step((1, int(m1)))
+        if (moves2):
+            for m2 in moves2:
+                if m2:
+                    environment.step((-1, int(m2)))
+        state = environment.state['board']
+        mask = environment.state['moves'][1]
+
+        minerals = round * 500
+        actions = []
+        fs = 0
+        while environment.state['minerals'][1] < minerals:
+            if fs > 200:
+                break
+            q_values = np.ma.array(agent.primary_network(state.reshape(1, -1)), mask=mask)
+            myaction = np.argmax(q_values)
+            environment.step((1, myaction))
+            actions.append(myaction)
+            fs += 1
+        return {'task': seperator.join(str(x) for x in actions)}, 201
+
+api.add_resource(GetMoves, '/getmoves/<string:request>')
+
+if __name__ == '__main__':
+     app.run(host='0.0.0.0', port='5077', threaded=True)

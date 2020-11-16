@@ -24,7 +24,7 @@ with open('/data/pgconfig.json', 'r') as f:
 # RESTurl = config['pgConfig']['NetResturl']
 # RESTurl = "http://localhost:51031/"
 RESTurl = "http://localhost:5000/"
-StateWithMask = False
+StateWithMask = True
 
 class PaxGameEnv(gym.Env):
     metadata = {'render.modes': ['human']}
@@ -36,8 +36,8 @@ class PaxGameEnv(gym.Env):
         # self.build_area_player1 = spaces.Box(low=0, high=2000, shape=(10, 20), dtype=np.int32)
         # self.build_area_player2 = spaces.Box(low=0, high=2000, shape=(10, 20), dtype=np.int32)
         # self.observation_space = spaces.Tuple([self.build_area_player1, self.build_area_player2])
-        self.observation_space = spaces.Box(low=0, high=20, shape=(20, 20), dtype=np.uint8)
-        # self.observation_space = self.get_osbervation_spec()
+        self.observation_space = spaces.Box(low=0, high=2000, shape=(20, 20), dtype=np.int32)
+
         self.unitmask = {}
         for i in range(BUNITS):
             self.unitmask[i] = np.zeros(num_actions, dtype=np.int8)
@@ -50,8 +50,8 @@ class PaxGameEnv(gym.Env):
 
     def get_osbervation_spec(self):
         """:returns An 'arrayspec' or a nested dict, list or tuple"""
-        state_spec = array_spec.ArraySpec(shape=(num_actions * 2, ), dtype=bool, name='mask')
-        mask_spec = array_spec.ArraySpec(shape=(BUNITS*BSIZEX*BSIZEY + BUPGRADES, ), dtype=bool, name='mask')
+        state_spec = array_spec.ArraySpec(shape=(20, 20), dtype=np.int32, name='state')
+        mask_spec = array_spec.ArraySpec(shape=(BUNITS*BSIZEX*BSIZEY + BUPGRADES, ), dtype=np.int32, name='mask')
         obs = {state_spec, mask_spec}
         return obs
 
@@ -69,23 +69,12 @@ class PaxGameEnv(gym.Env):
             self.state['on_move'] = p
         
         reward = 0
-        fsmove = 0
         roundmins = self.state['round'] * STEPMINERALS
         isvalid = self.state_generator(move)
         if isvalid:
             self.state['actions'][p].append(move)
         else:
-            # print("invalid action :( - " + str(len(self.state['actions'][p])) + " " + str(move))
-            fsmove = move
-            while not isvalid:
-                fsmove += 1
-                if fsmove >= num_actions:
-                    isvalid = self.state_generator(move - (fsmove - num_actions))
-                else:
-                    isvalid = self.state_generator(fsmove)
-            move = fsmove
-            self.state['actions'][p].append(move)
-            # return np.array(self.state['board']), -1, True, {}
+            print("invalid action :( - " + str(move))
             # return self.state['board'], -10, True, {}
             # obs = self.state['board']
             # mask = self.state['moves'][1]
@@ -160,23 +149,21 @@ class PaxGameEnv(gym.Env):
 
         if (reward == 0):
             reward = 0.1
-        if fsmove > 0:
-            reward -= 0.1
         
         if (StateWithMask): 
-            obs = np.array(self.state['board'])
+            obs = self.state['board']
             mask = self.state['moves'][1]
             obs = {'state': obs, 'mask': mask}
             return obs, reward, done, {}
         else:
-            return np.array(self.state['board']), reward, done, {}
+            return self.state['board'], reward, done, {}
     def reset(self):
         self.state = {}
-        self.state['board'] = np.zeros((20, 18 + 2), dtype=np.uint8)
+        self.state['board'] = np.zeros((20, 18 + 2), dtype=np.int32)
         self.state['on_move'] = 1
         self.state['moves'] = {}
-        self.state['moves'][1] = np.zeros(BUNITS*BSIZEX*BSIZEY + BUPGRADES, dtype=bool)
-        self.state['moves'][-1] = np.zeros(BUNITS*BSIZEX*BSIZEY + BUPGRADES, dtype=bool)
+        self.state['moves'][1] = np.zeros(BUNITS*BSIZEX*BSIZEY + BUPGRADES, dtype=np.int8)
+        self.state['moves'][-1] = np.zeros(BUNITS*BSIZEX*BSIZEY + BUPGRADES, dtype=np.int8)
         self.state['hp'] = {}
         self.state['hp'][1] = 1
         self.state['hp'][-1] = 1
@@ -189,7 +176,8 @@ class PaxGameEnv(gym.Env):
         self.state['actions'][-1] = []
         self.build = None
         self.mono = False
-        return np.array(self.state['board'])
+        # return np.array_split(self.state['board'], 2, axis=1)
+        return self.state['board']
     def render(self, mode='human', close=False):
         if close:
             return
@@ -199,7 +187,7 @@ class PaxGameEnv(gym.Env):
            print("|", end="")
            for j in range (BSIZEX * 2):
                #print(str(self.state['board'][i, j]) + "|", end="")
-               print(str(self.state['board'][i][j]) + "|", end="")
+               print(str(self.state['board'][i, j]) + "|", end="")
            print()
 
     def move_generator(self, om):
@@ -210,30 +198,28 @@ class PaxGameEnv(gym.Env):
         return self.state['moves'][1]
 
     def state_generator(self, move):
-        if move >= num_actions:
-            return False
         minerals = 0
         valid = True
-        if move >= BPOS:
+        if move > BPOS:
             ability = move - BPOS
-            if ability == 0:
+            if ability == 1:
                 minerals = 100 # Stimpack
-            elif ability == 1:
-                minerals = 50 # CombatShield
             elif ability == 2:
-                minerals = 25 # ConcussiveShells
+                minerals = 50 # CombatShield
             elif ability == 3:
-                minerals = 100 # attac
+                minerals = 25 # ConcussiveShells
             elif ability == 4:
+                minerals = 100 # attac
+            elif ability == 5:
                 minerals = 100 # armor
             if self.state['on_move'] == 1:
-                if self.state['board'][18][ability] == 0:
-                    self.state['board'][18][ability] = 4
+                if self.state['board'][-2, ability] == 0:
+                    self.state['board'][-2, ability] = int(1)
                 else:
                     valid = False
             else:
-                if self.state['board'][18][(ability - BSIZEY) * -1] == 0:
-                    self.state['board'][18][(ability - BSIZEY) * -1] = 14
+                if self.state['board'][-2, (ability - BSIZEY) * -1] == 0:
+                    self.state['board'][-2, (ability - BSIZEY) * -1] = int(2)
                 else:
                     valid = False
         else:
@@ -249,13 +235,13 @@ class PaxGameEnv(gym.Env):
                 minerals = 65
             if self.state['on_move'] == 1:
                 if self.state['board'][y][x] == 0:
-                    self.state['board'][y][x] = int((unitid + 1))
+                    self.state['board'][y][x] = int((unitid + 1) + 10)
                 else:
                     valid = False
             elif self.state['on_move'] == -1:
                 (mx, my) = self.State_mirrorImage(x, y)
                 if self.state['board'][int(my)][int(mx)] == 0:
-                    self.state['board'][int(my)][int(mx)] = int((unitid + 1) + 10)
+                    self.state['board'][int(my)][int(mx)] = int((unitid + 1) + 20)
                 else:
                     valid = False
         if valid == False:
@@ -281,9 +267,7 @@ class PaxGameEnv(gym.Env):
         linemoves = []
         move = -1
         if not build:
-            # build = str(random.choice(['random', 'line', 'dist']))
-            # build = str(random.choice(['random', 'line']))
-            build = 'random'
+            build = str(random.choice(['random', 'line', 'dist']))
             mono = bool(random.getrandbits(1))
 
         if build == 'random' and mono == False:

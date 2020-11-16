@@ -12,6 +12,11 @@ import gym_paxgame
 import os
 import requests
 
+import logging
+from flask import jsonify, make_response, Flask, request
+from flask_restful import abort,Resource, Api
+from flask.logging import default_handler
+
 import tensorflow as tf
 import numpy as np
 from tf_agents.networks import network
@@ -33,26 +38,27 @@ from tf_agents.distributions import masked
 # RESTurl = "http://localhost:5000/"
 # response = requests.get(url = RESTurl + "paxgame/reset")
 
-# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+
 tf.compat.v1.enable_v2_behavior()
 
 tempdir = "/data/ml"
 policy_dir = os.path.join(tempdir, 'policy')
 checkpoint_dir = os.path.join(tempdir, 'checkpoint')
 
-num_iterations = 20000 # @param {type:"integer"}
+num_iterations = 2 # @param {type:"integer"}
 
-initial_collect_steps = 100  # @param {type:"integer"} 
+initial_collect_steps = 1  # @param {type:"integer"} 
 # collect_steps_per_iteration = 1  # @param {type:"integer"}
-collect_steps_per_iteration = 1000  # @param {type:"integer"}
+collect_steps_per_iteration = 32  # @param {type:"integer"}
 replay_buffer_max_length = 100000  # @param {type:"integer"}
 
 batch_size = 32  # @param {type:"integer"}
 learning_rate = 1e-6  # @param {type:"number"}
-log_interval = 20  # @param {type:"integer"}
+log_interval = 1  # @param {type:"integer"}
 
-num_eval_episodes = 20  # @param {type:"integer"}
-eval_interval = 20  # @param {type:"integer"}
+num_eval_episodes = 1  # @param {type:"integer"}
+eval_interval = 1  # @param {type:"integer"}
 
 env_name = 'paxgame-v0'
 env = suite_gym.load(env_name)
@@ -208,14 +214,43 @@ for _ in range(num_iterations):
     print('step = {0}: Average Return = {1}'.format(step, avg_return))
     returns.append(avg_return)
 
-train_checkpointer.save(train_step_counter)
-tf_policy_saver = policy_saver.PolicySaver(agent.policy)
-tf_policy_saver.save(policy_dir)
 
+app = Flask(__name__)
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+api = Api(app)
+seperator = ','
+class GetMoves(Resource):
+    def get(self, request):
+        requests = request.split('X')
+        moves1 = requests[0].split(seperator)
+        moves2 = requests[1].split(seperator)
+        round = int(requests[2])
+        time_step = example_environment.reset()
+        # if (moves1):
+        #     for m1 in moves1:
+        #         if m1:
+        #             env._step((1, int(m1)))
+        # if (moves2):
+        #     for m2 in moves2:
+        #         if m2:
+        #             env._step((-1, int(m2)))
 
-iterations = range(0, num_iterations + 1, eval_interval)
-plt.plot(iterations, returns)
-plt.ylabel('Average Return')
-plt.xlabel('Iterations')
-#plt.ylim(top=250)
-plt.show()
+        minerals = round * 500
+        actions = []
+        fs = 0
+        while example_environment.state['minerals'][1] < minerals:
+            if fs > 200:
+                break
+            action_step = agent.policy.action(time_step)
+            next_time_step = example_environment.step(action_step.action)
+            traj = trajectory.from_transition(time_step, action_step, next_time_step)
+            actions.append(action_step.action)
+            time_step = example_environment.current_time_step()
+            fs += 1
+        return {'task': seperator.join(str(x) for x in actions)}, 201
+
+api.add_resource(GetMoves, '/getmoves/<string:request>')
+
+if __name__ == '__main__':
+     app.run(host='0.0.0.0', port='5077', threaded=True)

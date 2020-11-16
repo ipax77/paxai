@@ -20,31 +20,33 @@ from tensorflow.keras.initializers import he_normal
 from tensorflow.keras.callbacks import History
 from tf_agents.utils import common
 from tf_agents.policies import random_tf_policy
+from tensorflow.keras import models
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 tempdir = "/data/ml"
 policy_dir = os.path.join(tempdir, 'policy')
 checkpoint_dir = os.path.join(tempdir, 'checkpoint')
 train_step_counter = tf.Variable(0)
-h5_file = '/data/ml/model_h5/ddqn_paxgame_2.h5'
-DoLoadH5 = False
+h5_file = '/data/ml/model_h5/ddqn_paxgame3_43.h5'
+model_file = '/data/ml/model_h5/ddqn_paxgame3_4'
+DoLoadH5 = True
 
-EPISODES = 2000
+EPISODES = 200
 
 MAX_EPSILON = 1
 MIN_EPSILON = 0.01
 
 GAMMA = 0.95
-LAMBDA = 0.0005
+LAMBDA = 0.0006
 TAU = 0.08
 
-BATCH_SIZE = 128
-LAYERS = 800
+BATCH_SIZE = 32
+LAYERS = 720
 REWARD_STD = 1.0
 
 enviroment = gym.make("paxgame-v0")
 
-NUM_STATES = 400
+NUM_STATES = 360
 NUM_ACTIONS = enviroment.action_space.n
 results = []
 
@@ -149,7 +151,9 @@ class DDQNAgent:
         self.align_target_network()
         
         if (self.DoLoadH5):
-            self.primary_network.load_weights(h5_file)
+            print("h5 loaded.")
+            # self.primary_network.load_weights(h5_file)
+            self.primary_network = models.load_model(h5_file)
             self.DoLoadH5 = False
 
         return loss
@@ -166,10 +170,11 @@ class AgentTrainer():
         return next_state, reward, terminated
     
     def _print_epoch_values(self, episode, total_epoch_reward, average_loss):
-        print("**********************************")
-        print(f"Episode: {episode} - Reward: {total_epoch_reward} - Average Loss: {average_loss:.3f} - Epsilon: {agent.epsilon}")
-        print(f"Rounds: {enviroment.state['round']} - Mins: {enviroment.state['minerals'][1]}|{enviroment.state['minerals'][-1]} - Hp: {enviroment.state['hp'][1]}|{enviroment.state['hp'][-1]}")
-    
+        if episode % 10 == 0:
+            print("**********************************")
+            print(f"Episode: {episode} - Reward: {total_epoch_reward} - Average Loss: {average_loss:.3f} - Epsilon: {agent.epsilon}")
+            print(f"Rounds: {enviroment.state['round']} - Mins: {enviroment.state['minerals'][1]}|{enviroment.state['minerals'][-1]} - Hp: {enviroment.state['hp'][1]}|{enviroment.state['hp'][-1]}")
+            print(f"AIMoves: {','.join(str(x) for x in self.enviroment.state['actions'][1])}")
     def train(self, num_of_episodes = 1000):
         total_timesteps = 0  
         
@@ -177,19 +182,21 @@ class AgentTrainer():
 
             # Reset the enviroment
             state = self.enviroment.reset()
-
+            laststate = np.array(state)
             # Initialize variables
             average_loss_per_episode = []
             average_loss = 0
             total_epoch_reward = 0
             mask = np.zeros(NUM_ACTIONS, dtype=np.int8)
+            moves = []
             step = 0
             terminated = False
 
             while not terminated:
-                step += 1
+                
                 # Run Action
                 action = agent.act(state, mask)
+                moves.append(action)
 
                 # Take action    
                 obs, reward, terminated = self._take_action(action)
@@ -198,21 +205,31 @@ class AgentTrainer():
                 else:
                     next_state = obs['state']
                     mask = obs['mask']
-                agent.store(state, action, reward, next_state, terminated)
-                
-                loss = agent.train(BATCH_SIZE)
-                average_loss += loss
+                if reward != 0:
+                    step += 1
+                    for move in moves:
+                        agent.store(laststate, move, reward, state, terminated)
+                        loss = agent.train(BATCH_SIZE)
+                    lastmove = moves.pop()
+                    # next_state = next_state if not terminated else None
+                    agent.store(state, lastmove, reward, next_state, terminated)
+                    moves = []
+                    loss = agent.train(BATCH_SIZE)
+                    average_loss += loss
+                    agent.align_epsilon(episode)
+                    total_timesteps += 1
+                    laststate = np.array(next_state)
 
                 state = next_state
+                
                 # agent.align_epsilon(total_timesteps)
-                agent.align_epsilon(episode)
-                total_timesteps += 1
 
                 if terminated:
+                    # enviroment.render()
                     preward = 0
-                    if reward > 1.0:
+                    if enviroment.state['hp'][1] < 2000:
                         preward = 1
-                    elif reward < 1.0:
+                    elif enviroment.state['hp'][-1] < 2000:
                         preward = -1
                     results.append(preward)
                     average_loss /= step
@@ -253,5 +270,7 @@ agent = DDQNAgent(expirience_replay, NUM_STATES, NUM_ACTIONS, optimizer, DoLoadH
 agent_trainer = AgentTrainer(agent, enviroment)
 agent_trainer.train(EPISODES)
 
-agent.primary_network.save_weights(h5_file)
+# agent.primary_network.save_weights(h5_file)
+agent.primary_network.save(h5_file)
+
 show(results, size=int(EPISODES / 20))
